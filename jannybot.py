@@ -5,7 +5,8 @@ import json
 from datetime import datetime, timedelta
 
 intents = discord.Intents.default()
-intents.messages = True  # Enable the messages intent
+intents.messages = True         # Enable the messages intent
+intents.message_content = True  # Enable the message content intent
 
 bot = commands.Bot(command_prefix='scruffy/', intents=intents)
 
