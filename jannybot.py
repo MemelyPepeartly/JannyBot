@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 intents = discord.Intents.default()
 intents.messages = True  # Enable the messages intent
 
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix='scruffy/', intents=intents)
 
 # Configuration
 delete_threshold = 10               # Number of deletions allowed within the time period
@@ -109,4 +109,4 @@ async def restrict_user(user):
                 await channel.send(f"{user.mention} has been restricted from deleting their own messages due to excessive deletions.")
 
 
-bot.run('TOKEN')
+bot.run('')
