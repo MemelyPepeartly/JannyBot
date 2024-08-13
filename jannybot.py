@@ -95,9 +95,9 @@ async def on_message(message):
         print(f"New message embed detected in watched channel: {message.channel.name}")
         
         for embed in message.embeds:
-            print("Embed detected:")
-            print(f"Title: {embed.title}")
-            print(f"Description: {embed.description}")
+            # print("Embed detected:")
+            # print(f"Title: {embed.title}")
+            # print(f"Description: {embed.description}")
 
             # Extract the username from the author.name and remove the #0 suffix
             if embed.author.name and "#0" in embed.author.name:
