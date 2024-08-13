@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timedelta
 
 intents = discord.Intents.default()
-intents.message_delete = True
+intents.messages = True  # Enable the messages intent
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
