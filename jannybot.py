@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
+intents.members = True
 
 bot = commands.Bot(command_prefix='scruffy/', intents=intents)
 
@@ -89,45 +90,51 @@ async def on_message_delete(message):
 
 @bot.event
 async def on_message(message):
-    print(f"Message detected: {message.content}")
-    print(f"Embeds detected: {message.embeds}")
-
-
     # Check if the message is in the watched channel and contains an embed
     if message.channel.id == channel_watch_id and message.embeds:
-        print(f"New message detected in watched channel: {message.channel.name}")
+        print(f"New message embed detected in watched channel: {message.channel.name}")
         
         for embed in message.embeds:
             print("Embed detected:")
             print(f"Title: {embed.title}")
             print(f"Description: {embed.description}")
-            print(f"Author: {embed.author.name} (Icon URL: {embed.author.icon_url})")
 
-            if embed.description and "Message Deleted" in embed.description:
-                print("Message deletion detected in embed description.")
-                
-                # Extract user information from the embed
-                user_name = embed.author.name
-                user_id = int(embed.author.icon_url.split('/')[-1].split('.')[0])  # Assuming user ID is in the URL
-                
-                print(f"User identified: {user_name} (ID: {user_id})")
+            # Extract the username from the author.name and remove the #0 suffix
+            if embed.author.name and "#0" in embed.author.name:
+                username = embed.author.name.replace("#0", "")
+                print(f"Username: {username}")
 
-                # Track the deletion
-                now = datetime.utcnow()
-                user_id_str = str(user_id)
-                deleted_message_count[user_id_str].append(now)
+                # Attempt to find the user by username
+                user = discord.utils.get(message.guild.members, name=username)
 
-                # Update user deletion info
-                if user_id_str in user_deletion_info:
-                    user_deletion_info[user_id_str]['count'] += 1
+                if user:
+                    user_id_str = str(user.id)
+                    print(f"User found: {user} (ID: {user_id_str})")
+
+                    # Check the footer's text for the deletion marker
+                    if embed.footer and "Message Deleted" in embed.footer.text:
+                        print("Message deletion detected in embed footer.")
+
+                        # Track the deletion
+                        now = datetime.utcnow()
+                        deleted_message_count[user_id_str].append(now)
+
+                        # Update user deletion info
+                        if user_id_str in user_deletion_info:
+                            user_deletion_info[user_id_str]['count'] += 1
+                        else:
+                            user_deletion_info[user_id_str] = {'count': 1, 'last_deleted': now.isoformat()}
+
+                        # Always update the last_deleted timestamp
+                        user_deletion_info[user_id_str]['last_deleted'] = now.isoformat()
+
+                        save_data()
+                        print(f"Message deleted by {username} at {now}")
+
                 else:
-                    user_deletion_info[user_id_str] = {'count': 1, 'last_deleted': now.isoformat()}
+                    print(f"User {username} not found in the guild.")
 
-                # Always update the last_deleted timestamp
-                user_deletion_info[user_id_str]['last_deleted'] = now.isoformat()
-
-                save_data()
-                print(f"Message deleted by {user_name} at {now}")
+    await bot.process_commands(message)  # Ensure other commands are still processed
 
 @tasks.loop(minutes=1)
 async def check_deletions():
