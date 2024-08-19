@@ -53,9 +53,19 @@ async def on_ready():
     load_data()
     check_deletions.start()  # Start the background task to check deletions
 
+# Helper function to check for required roles
+def has_required_role(ctx):
+    required_roles = {"Tard Wrangler", "Fim/Owners"}
+    user_roles = {role.name for role in ctx.author.roles}
+    return bool(required_roles.intersection(user_roles))
+
 @bot.command()
 async def channel_watch(ctx, channel: discord.TextChannel):
     """Set the channel to watch for deletion embeds."""
+    if not has_required_role(ctx):
+        await ctx.send("You do not have the required role to use this command.")
+        return
+    
     global channel_watch_id
     channel_watch_id = channel.id
     save_data()
@@ -65,6 +75,10 @@ async def channel_watch(ctx, channel: discord.TextChannel):
 @bot.command()
 async def add_user(ctx, user: discord.User):
     """Add a user to the notification list."""
+    if not has_required_role(ctx):
+        await ctx.send("You do not have the required role to use this command.")
+        return
+    
     if user.id not in notification_users:
         notification_users.append(user.id)
         save_data()
@@ -77,6 +91,10 @@ async def add_user(ctx, user: discord.User):
 @bot.command()
 async def set_threshold(ctx, threshold: int):
     """Set the message deletion threshold."""
+    if not has_required_role(ctx):
+        await ctx.send("You do not have the required role to use this command.")
+        return
+    
     global delete_threshold
     delete_threshold = threshold
     save_data()
@@ -86,6 +104,10 @@ async def set_threshold(ctx, threshold: int):
 @bot.command()
 async def whitelist_user(ctx, user: discord.User):
     """Add a user to the whitelist."""
+    if not has_required_role(ctx):
+        await ctx.send("You do not have the required role to use this command.")
+        return
+    
     if user.id not in whitelist:
         whitelist.append(user.id)
         save_data()
@@ -94,6 +116,25 @@ async def whitelist_user(ctx, user: discord.User):
     else:
         await ctx.send(f"{user.mention} is already in the whitelist.")
         print(f"{user} is already in the whitelist.")
+
+@bot.command()
+async def status(ctx):
+    """Check the status of message deletions."""
+    if not has_required_role(ctx):
+        await ctx.send("You do not have the required role to use this command.")
+        return
+    
+    embed = discord.Embed(title="Message Deletion Status", color=discord.Color.blue())
+    
+    if user_deletion_info:
+        for user_id, info in user_deletion_info.items():
+            user = await bot.fetch_user(user_id)
+            embed.add_field(name=user.name, value=f"Deleted Messages: {info['count']}\nLast Deleted: {info['last_deleted']}", inline=False)
+    else:
+        embed.description = "No users have deleted messages within the threshold."
+
+    await ctx.send(embed=embed)
+    print(f"Status command invoked by {ctx.author}")
 
 @bot.event
 async def on_message(message):
@@ -194,20 +235,5 @@ async def kick_user(member):
         print(f"Failed to kick {member}: Missing Permissions")
     except Exception as e:
         print(f"An error occurred while trying to kick {member}: {str(e)}")
-
-@bot.command()
-async def status(ctx):
-    """Check the status of message deletions."""
-    embed = discord.Embed(title="Message Deletion Status", color=discord.Color.blue())
-    
-    if user_deletion_info:
-        for user_id, info in user_deletion_info.items():
-            user = await bot.fetch_user(user_id)
-            embed.add_field(name=user.name, value=f"Deleted Messages: {info['count']}\nLast Deleted: {info['last_deleted']}", inline=False)
-    else:
-        embed.description = "No users have deleted messages within the threshold."
-
-    await ctx.send(embed=embed)
-    print(f"Status command invoked by {ctx.author}")
 
 bot.run('')
