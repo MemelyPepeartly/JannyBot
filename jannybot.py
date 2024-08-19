@@ -13,7 +13,6 @@ bot = commands.Bot(command_prefix='scruffy/', intents=intents)
 
 # Configuration
 delete_threshold = 10  # Default value; will be loaded from JSON
-time_period = timedelta(minutes=5)  # Time period to track deletions
 notification_users = []
 whitelist = []
 channel_watch_id = None  # ID of the channel to watch for deletion embeds
@@ -24,12 +23,13 @@ user_deletion_info = {}  # Tracks the number of deletions per user
 
 # Load data from JSON file
 def load_data():
-    global delete_threshold, notification_users, user_deletion_info, channel_watch_id
+    global delete_threshold, notification_users, whitelist, user_deletion_info, channel_watch_id
     try:
         with open('bot_data.json', 'r') as f:
             data = json.load(f)
             delete_threshold = data.get('delete_threshold', 10)
             notification_users = data.get('notification_users', [])
+            whitelist = data.get('whitelist', [])
             user_deletion_info = data.get('user_deletion_info', {})
             channel_watch_id = data.get('channel_watch_id', None)
     except FileNotFoundError:
@@ -40,6 +40,7 @@ def save_data():
     data = {
         'delete_threshold': delete_threshold,
         'notification_users': notification_users,
+        'whitelist': whitelist,
         'user_deletion_info': user_deletion_info,
         'channel_watch_id': channel_watch_id
     }
@@ -61,32 +62,38 @@ async def channel_watch(ctx, channel: discord.TextChannel):
     await ctx.send(f"Watching channel {channel.mention} for message deletion embeds.")
     print(f"Set channel_watch_id to {channel.id}")
 
-@bot.event
-async def on_message_delete(message):
-    if message.author.bot:
-        return  # Ignore bot messages
-
-    user_id = str(message.author.id)  # Ensure user_id is a string
-
-    # Ignore whitelisted users
-    if user_id in whitelist:
-        return
-
-    # Track the time of deletion
-    now = datetime.utcnow()
-    deleted_message_count[user_id].append(now)
-
-    # Update user deletion info
-    if user_id in user_deletion_info:
-        user_deletion_info[user_id]['count'] += 1
+@bot.command()
+async def add_user(ctx, user: discord.User):
+    """Add a user to the notification list."""
+    if user.id not in notification_users:
+        notification_users.append(user.id)
+        save_data()
+        await ctx.send(f"{user.mention} has been added to the notification list.")
+        print(f"Added {user} to the notification list.")
     else:
-        user_deletion_info[user_id] = {'count': 1, 'last_deleted': now.isoformat()}
+        await ctx.send(f"{user.mention} is already in the notification list.")
+        print(f"{user} is already in the notification list.")
 
-    # Always update the last_deleted timestamp
-    user_deletion_info[user_id]['last_deleted'] = now.isoformat()
-
+@bot.command()
+async def set_threshold(ctx, threshold: int):
+    """Set the message deletion threshold."""
+    global delete_threshold
+    delete_threshold = threshold
     save_data()
-    print(f"Message deleted by {message.author} at {now}")
+    await ctx.send(f"Message deletion threshold set to {delete_threshold}.")
+    print(f"Threshold set to {delete_threshold}")
+
+@bot.command()
+async def whitelist_user(ctx, user: discord.User):
+    """Add a user to the whitelist."""
+    if user.id not in whitelist:
+        whitelist.append(user.id)
+        save_data()
+        await ctx.send(f"{user.mention} has been added to the whitelist.")
+        print(f"Added {user} to the whitelist.")
+    else:
+        await ctx.send(f"{user.mention} is already in the whitelist.")
+        print(f"{user} is already in the whitelist.")
 
 @bot.event
 async def on_message(message):
@@ -95,11 +102,6 @@ async def on_message(message):
         print(f"New message embed detected in watched channel: {message.channel.name}")
         
         for embed in message.embeds:
-            # print("Embed detected:")
-            # print(f"Title: {embed.title}")
-            # print(f"Description: {embed.description}")
-
-            # Extract the username from the author.name and remove the #0 suffix
             if embed.author.name and "#0" in embed.author.name:
                 username = embed.author.name.replace("#0", "")
                 print(f"Username: {username}")
@@ -110,6 +112,11 @@ async def on_message(message):
                 if user:
                     user_id_str = str(user.id)
                     print(f"User found: {user} (ID: {user_id_str})")
+
+                    # Ignore whitelisted users
+                    if user.id in whitelist:
+                        print(f"{user} is whitelisted. Ignoring message deletion tracking.")
+                        continue
 
                     # Check the footer's text for the deletion marker
                     if embed.footer and "Message Deleted" in embed.footer.text:
@@ -136,51 +143,57 @@ async def on_message(message):
 
     await bot.process_commands(message)  # Ensure other commands are still processed
 
-@tasks.loop(minutes=1)
+@tasks.loop(seconds=15)
 async def check_deletions():
     now = datetime.utcnow()
+    users_to_remove = []
 
     for user_id, timestamps in deleted_message_count.items():
-        # Filter out timestamps older than the time period
-        deleted_message_count[user_id] = [ts for ts in timestamps if now - ts < time_period]
+        # Reset the user's deletion count if more than 2 minutes have passed since their last deletion
+        last_deleted_time = max(timestamps, default=None)
+        if last_deleted_time and now - last_deleted_time > timedelta(minutes=2):
+            users_to_remove.append(user_id)
+            print(f"User {user_id} no longer tracked due to inactivity.")
 
         # Check if the user has exceeded the threshold
         if len(deleted_message_count[user_id]) >= delete_threshold:
-            user = await bot.fetch_user(user_id)
-            # Restrict the user (customize based on your server's roles/permissions)
-            await restrict_user(user)
-            # Notify the specified users
-            for notification_user_id in notification_users:
-                notification_user = await bot.fetch_user(notification_user_id)
-                await notification_user.send(f"{user.mention} has been restricted from deleting messages due to excessive deletions.")
-            # Reset the user's deletion count
-            deleted_message_count[user_id] = []
+            # Find the member in all the guilds the bot is in
+            member = None
+            for guild in bot.guilds:
+                member = guild.get_member(int(user_id))
+                if member:
+                    break
 
-async def restrict_user(user):
-    for guild in bot.guilds:
-        for channel in guild.text_channels:
-            try:
-                # Get the current permissions for the user in the channel
-                permissions = channel.permissions_for(user)
+            if member:
+                # Kick the user from the server
+                await kick_user(member)
+                # Notify the specified users
+                for notification_user_id in notification_users:
+                    notification_user = await bot.fetch_user(notification_user_id)
+                    await notification_user.send(f"{member.mention} has been kicked from the server due to excessive message deletions.")
+                # Mark the user for removal from the list after kicking
+                users_to_remove.append(user_id)
+            else:
+                print(f"Member with ID {user_id} not found in any guild.")
 
-                # Check if the user can manage messages, then restrict them
-                if permissions.manage_messages:
-                    # Define the new permissions overwriting the existing ones
-                    overwrite = discord.PermissionOverwrite()
-                    overwrite.manage_messages = False
+    # Remove users who are no longer active
+    for user_id in users_to_remove:
+        deleted_message_count.pop(user_id, None)
+        user_deletion_info.pop(user_id, None)
+        print(f"Removed user {user_id} from tracking data.")
+    
+    save_data()
 
-                    # Apply the permission overwrite to the specific user in this channel
-                    await channel.set_permissions(user, overwrite=overwrite)
-
-                    # Send a notification to the channel
-                    await channel.send(f"{user.mention} has been restricted from deleting their own messages due to excessive deletions.")
-                    print(f"Restricted {user} from managing messages in {channel.name}.")
-
-            except discord.Forbidden:
-                print(f"Failed to restrict {user} in {channel.name}: Missing Permissions")
-
-            except Exception as e:
-                print(f"An error occurred while trying to restrict {user} in {channel.name}: {str(e)}")
+async def kick_user(member):
+    try:
+        # Send a DM to the user before kicking
+        await member.send("You have been kicked from the server due to exceeding the message deletion threshold.")
+        await member.kick(reason="Exceeded message deletion threshold")
+        print(f"Kicked {member} from the server for exceeding message deletion threshold.")
+    except discord.Forbidden:
+        print(f"Failed to kick {member}: Missing Permissions")
+    except Exception as e:
+        print(f"An error occurred while trying to kick {member}: {str(e)}")
 
 @bot.command()
 async def status(ctx):
